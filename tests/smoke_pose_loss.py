@@ -74,3 +74,12 @@ assert {"bone_loss", "symmetry_loss", "angle_prior_loss"} <= set(loss_items4), "
 assert torch.isfinite(loss4.sum()), "loss is not finite (all on)"
 loss4.sum().backward()
 print("SMOKE_OK (all anatomy on)")
+
+# B1.5 开启：三项全开 + 自动配权（ω=softmax((1/L)/T)，stopgradient；手工权重退化为开门）
+model.args.anatomy_uncertainty = 1.0
+loss5, loss_items5 = model(batch)
+print("loss_items(uncertainty on)=", {k: round(v.item(), 4) for k, v in loss_items5.items()})
+assert {"bone_loss", "symmetry_loss", "angle_prior_loss"} <= set(loss_items5), "anatomy loss keys missing"
+assert torch.isfinite(loss5.sum()), "loss is not finite (uncertainty on)"
+loss5.sum().backward()
+print("SMOKE_OK (uncertainty weighting on)")

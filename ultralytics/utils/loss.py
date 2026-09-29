@@ -15,7 +15,7 @@ from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
-from .bone_loss import AnglePlausibilityLoss, BoneConsistencyLoss, SymmetryLoss
+from .bone_loss import AnglePlausibilityLoss, BoneConsistencyLoss, SymmetryLoss, uncertainty_weights
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
@@ -734,8 +734,17 @@ class v8PoseLoss(v8DetectionLoss):
 
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
-        for k, v in anat_values.items():
-            loss[1] += v * anat_w[k]  # 解剖先验在 pose 增益后并入，hyp 权重即绝对权重
+        if anat_values:
+            t_unc = getattr(self.hyp, "anatomy_uncertainty", 0.0)
+            if t_unc > 0:
+                # B1.5 自动配权（arXiv 2408.07985）：ω=softmax((1/L)/T)，L detach 即 stopgradient；
+                # 手工权重退化为开/关门（>0 开启），实际权重=anat_w×ω，消融里 anat_w 全部置 1
+                w_auto = uncertainty_weights([v.detach() for v in anat_values.values()], t_unc)
+                for (k, v), w in zip(anat_values.items(), w_auto):
+                    loss[1] += v * anat_w[k] * w
+            else:
+                for k, v in anat_values.items():
+                    loss[1] += v * anat_w[k]  # 解剖先验在 pose 增益后并入，hyp 权重即绝对权重
 
         loss_items = dict(zip(self.loss_names, loss.detach()))
         for k, w in anat_w.items():

@@ -132,3 +132,14 @@ class AnglePlausibilityLoss(nn.Module):
         theta_min = self.triples[:, 3].deg2rad().unsqueeze(0)
         e = (theta_min - theta).clamp(min=0.0).pow(2) * w
         return e.sum() / w.sum().add(self.eps)
+
+
+def uncertainty_weights(losses: list, temperature: float) -> torch.Tensor:
+    """B1.5 解剖先验自动配权（arXiv 2408.07985 解析解 σ*=√L 的 softmax 形式）。
+
+    ω_j = softmax_j((1/L_j)/T)。调用方须传入 detach 后的损失（stopgradient：权重只做
+    平衡，不给损失本身回传梯度）；L_j + eps 防除零（预测完美时 L→0，权重全归该项）。
+    温度越大分布越均匀；单元素退化为 1.0（softmax 单值恒 1）。
+    """
+    inv = torch.stack([1.0 / (v + 1e-8) for v in losses])
+    return (inv / temperature).softmax(dim=0)

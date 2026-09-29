@@ -108,6 +108,10 @@ cls_pw: 0.0 # (float) class weights power for handling class imbalance (0.0=disa
 dfl: 1.5 # (float) distribution focal loss gain
 pose: 12.0 # (float) pose loss gain (pose tasks)
 kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
+bone: 0.0 # (float) anatomy prior: bone length+direction consistency gain (round6 B1.2)
+symmetry: 0.0 # (float) anatomy prior: left-right symmetry gain (round6 B1.3)
+angle_prior: 0.0 # (float) anatomy prior: joint angle plausibility gain (round6 B1.4); not "angle" (obb gain above)
+anatomy_uncertainty: 0.0 # (float) temperature >0 enables analytic auto-weighting of anatomy losses (round6 B1.5), e.g. 1.0
 rle: 1.0 # (float) rle loss gain (pose tasks)
 angle: 1.0 # (float) oriented angle loss gain (obb tasks)
 dlog: 1.0 # (float) depth log (SILog) loss gain (depth tasks)
