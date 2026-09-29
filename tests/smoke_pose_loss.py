@@ -43,4 +43,13 @@ print("loss_sum=", loss.sum().item())
 print("loss_items=", {k: round(v.item(), 4) for k, v in loss_items.items()})
 assert torch.isfinite(loss.sum()), "loss is not finite"
 loss.sum().backward()
-print("SMOKE_OK")
+print("SMOKE_OK (bone off)")
+
+# B1.2 开启：hyp.bone 权重注入后 bone_loss 键出现且反向仍通
+model.args.bone = 1.0
+loss2, loss_items2 = model(batch)
+print("loss_items(bone on)=", {k: round(v.item(), 4) for k, v in loss_items2.items()})
+assert "bone_loss" in loss_items2, "bone_loss key missing when hyp.bone > 0"
+assert torch.isfinite(loss2.sum()), "loss is not finite (bone on)"
+loss2.sum().backward()
+print("SMOKE_OK (bone on)")

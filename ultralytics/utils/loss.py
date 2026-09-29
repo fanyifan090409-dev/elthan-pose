@@ -15,6 +15,7 @@ from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
+from .bone_loss import BoneConsistencyLoss
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
@@ -671,6 +672,8 @@ class v8PoseLoss(v8DetectionLoss):
                 raise ValueError(f"'kpt_oks_sigmas' must be {nkpt} positive values, got {sigmas.tolist()}")
 
         self.keypoint_loss = KeypointLoss(sigmas=sigmas)
+        # B1.2 骨长+方向一致性（默认关：hyp 无 bone 键或 bone=0 时不并入 loss）
+        self.bone_criterion = BoneConsistencyLoss().to(self.device)
 
     def loss(
         self, preds: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]
@@ -691,6 +694,8 @@ class v8PoseLoss(v8DetectionLoss):
         pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
 
         # Keypoint loss
+        bone_w = getattr(self.hyp, "bone", 0.0)  # B1.2 开关：hyp.bone 权重，默认 0 即关
+        bone_value = None
         if fg_mask.sum():
             keypoints = batch["keypoints"].to(self.device).float().clone()
             keypoints[..., 0] *= imgsz[1]
@@ -706,10 +711,27 @@ class v8PoseLoss(v8DetectionLoss):
                 pred_kpts,
             )
 
+            # B1.2 骨长+方向一致性：与 keypoints loss 同空间（stride 网格），躯干归一化在模块内
+            if bone_w > 0:
+                bone_value = self.calculate_bone_loss(
+                    fg_mask,
+                    target_gt_idx,
+                    keypoints,
+                    batch["batch_idx"].view(-1, 1),
+                    stride_tensor,
+                    pred_kpts,
+                )
+
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
+        if bone_value is not None:
+            loss[1] += bone_value * bone_w  # 骨长项在 pose 增益后并入，bone 权重即绝对权重
 
-        return loss * batch_size, dict(zip(self.loss_names, loss.detach()))  # loss(box, pose, kobj, cls, dfl)
+        loss_items = dict(zip(self.loss_names, loss.detach()))
+        if bone_w > 0:
+            # 键集合须整轮稳定（trainer 按键做 EMA）：bone 开启时空 batch 也补 0 值键
+            loss_items["bone_loss"] = bone_value.detach() if bone_value is not None else loss[1].detach() * 0.0
+        return loss * batch_size, loss_items  # loss(box, pose, kobj, cls, dfl)
 
     @staticmethod
     def kpts_decode(anchor_points: torch.Tensor, pred_kpts: torch.Tensor) -> torch.Tensor:
@@ -821,6 +843,26 @@ class v8PoseLoss(v8DetectionLoss):
                 kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss
 
         return kpts_loss, kpts_obj_loss
+
+    def calculate_bone_loss(
+        self,
+        masks: torch.Tensor,
+        target_gt_idx: torch.Tensor,
+        keypoints: torch.Tensor,
+        batch_idx: torch.Tensor,
+        stride_tensor: torch.Tensor,
+        pred_kpts: torch.Tensor,
+    ) -> torch.Tensor:
+        """Calculate bone length/direction consistency loss (B1.2).
+
+        Aligns GT keypoints to fg anchors with the same convention as calculate_keypoints_loss
+        (pixel-space keypoints folded back to stride grid space to match decoded pred_kpts).
+        """
+        selected_keypoints = self._select_target_keypoints(keypoints, batch_idx, target_gt_idx, masks)
+        gt_kpt = selected_keypoints[masks]
+        gt_kpt[..., :2] /= stride_tensor.view(1, -1).expand(masks.shape[0], -1)[masks][:, None, None]
+        pred_kpt = pred_kpts[masks]
+        return self.bone_criterion(pred_kpt, gt_kpt)
 
 
 class PoseLoss26(v8PoseLoss):
