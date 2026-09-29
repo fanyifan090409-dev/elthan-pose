@@ -15,7 +15,14 @@ from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
-from .bone_loss import AnglePlausibilityLoss, BoneConsistencyLoss, SymmetryLoss, uncertainty_weights
+from .bone_loss import (
+    AnglePlausibilityLoss,
+    BoneConsistencyLoss,
+    BoneStatsLoss,
+    LearnableBonePrior,
+    SymmetryLoss,
+    uncertainty_weights,
+)
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
@@ -672,14 +679,16 @@ class v8PoseLoss(v8DetectionLoss):
                 raise ValueError(f"'kpt_oks_sigmas' must be {nkpt} positive values, got {sigmas.tolist()}")
 
         self.keypoint_loss = KeypointLoss(sigmas=sigmas)
-        # 解剖先验损失（B1.2 骨长 / B1.3 对称 / B1.4 角度），键名与 hyp 权重键一致，默认全关
-        # 解剖先验损失（B1.2 骨长 / B1.3 对称 / B1.4 角度），键名与 hyp 权重键一致，默认全关。
-        # 注意「angle」不可用：default.yaml 已有 angle（OBB 定向角增益，默认 1.0），故用 angle_prior
+        # 解剖先验损失（B1.2 骨长 / B1.3 对称 / B1.4 角度 / B1.6 手工-可学习对照），键名与 hyp 权重键一致，默认全关。
+        # 注意「angle」不可用：default.yaml 已有 angle（OBB 定向角增益，默认 1.0），故用 angle_prior。
+        # bone_stats/bone_prior 为 B1.6 对照组：消融时二选一开启，不与其他骨长项同开
         self.anatomy_criteria = nn.ModuleDict(
             {
                 "bone": BoneConsistencyLoss(),
                 "symmetry": SymmetryLoss(),
                 "angle_prior": AnglePlausibilityLoss(),
+                "bone_stats": BoneStatsLoss(),
+                "bone_prior": LearnableBonePrior(),
             }
         ).to(self.device)
 

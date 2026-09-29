@@ -112,6 +112,8 @@ bone: 0.0 # (float) anatomy prior: bone length+direction consistency gain (round
 symmetry: 0.0 # (float) anatomy prior: left-right symmetry gain (round6 B1.3)
 angle_prior: 0.0 # (float) anatomy prior: joint angle plausibility gain (round6 B1.4); not "angle" (obb gain above)
 anatomy_uncertainty: 0.0 # (float) temperature >0 enables analytic auto-weighting of anatomy losses (round6 B1.5), e.g. 1.0
+bone_stats: 0.0 # (float) anatomy prior: batch-statistics bone length gain (round6 B1.6 manual arm)
+bone_prior: 0.0 # (float) anatomy prior: learnable per-bone gaussian NLL gain (round6 B1.6 learnable arm)
 rle: 1.0 # (float) rle loss gain (pose tasks)
 angle: 1.0 # (float) oriented angle loss gain (obb tasks)
 dlog: 1.0 # (float) depth log (SILog) loss gain (depth tasks)

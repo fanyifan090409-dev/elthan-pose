@@ -143,3 +143,61 @@ def uncertainty_weights(losses: list, temperature: float) -> torch.Tensor:
     """
     inv = torch.stack([1.0 / (v + 1e-8) for v in losses])
     return (inv / temperature).softmax(dim=0)
+
+
+class BoneStatsLoss(nn.Module):
+    """B1.6 手工版对照：批内统计先验——参考骨长为本批 fg 样本 GT 骨长（躯干归一化）的加权均值。
+
+    与 BoneConsistencyLoss（逐样本 GT 监督）不同：监督信号是批统计量 μ_j 而非单个样本的
+    GT 向量；单样本批退化为逐样本对比。骨段两端任一 v==0 或 GT 骨向量退化则整段跳过，
+    本批无有效样本的骨段不参与。
+    """
+
+    def __init__(self, bones=BONES_COCO17, torso_bones=TORSO_BONES_COCO17, eps=1e-7):
+        super().__init__()
+        self.register_buffer("bones", torch.tensor(bones, dtype=torch.long))
+        self.register_buffer("torso_bones", torch.tensor(torso_bones, dtype=torch.long))
+        self.eps = eps
+
+    def forward(self, pred_kpts: torch.Tensor, gt_kpts: torch.Tensor) -> torch.Tensor:
+        p = pred_kpts[..., :2]
+        g = gt_kpts[..., :2]
+        w_v = vis_weights(gt_kpts)
+        torso = gt_torso_len(g, w_v, self.torso_bones, self.eps)  # (N,)
+        i, j = self.bones[:, 0], self.bones[:, 1]
+        g_len = (g[:, j] - g[:, i]).norm(dim=-1) / torso.unsqueeze(-1)  # (N,J)
+        p_len = (p[:, j] - p[:, i]).norm(dim=-1) / torso.unsqueeze(-1)  # (N,J)
+        w = w_v[:, i] * w_v[:, j] * (g_len > self.eps)  # 退化 GT 骨向量不进入统计
+        wsum = w.sum(0)  # (J,)
+        mu = (g_len * w).sum(0) / wsum.add(self.eps)  # 批内统计参考 (J,)
+        valid = (wsum > self.eps) & (mu > self.eps)
+        e = ((p_len - mu.unsqueeze(0)) / mu.unsqueeze(0).add(self.eps)).pow(2) * w  # 相对误差平方
+        return e[:, valid].sum() / w[:, valid].sum().add(self.eps)
+
+
+class LearnableBonePrior(nn.Module):
+    """B1.6 可学习版：每骨段可训练 (μ,σ) 高斯先验，损失为负对数似然（躯干归一化骨长）。
+
+    μ 初值 1.0（归一化骨长 O(1)）、log σ 初值 0（σ=1）；梯度同时流向预测骨长与先验参数。
+    GT 只用于可见性掩码与躯干归一化，不提供逐样本长度监督（与 BoneStatsLoss 批统计对照）。
+    """
+
+    def __init__(self, bones=BONES_COCO17, torso_bones=TORSO_BONES_COCO17, eps=1e-7):
+        super().__init__()
+        self.register_buffer("bones", torch.tensor(bones, dtype=torch.long))
+        self.register_buffer("torso_bones", torch.tensor(torso_bones, dtype=torch.long))
+        self.eps = eps
+        n = len(bones)
+        self.mu = nn.Parameter(torch.ones(n))
+        self.log_sigma = nn.Parameter(torch.zeros(n))
+
+    def forward(self, pred_kpts: torch.Tensor, gt_kpts: torch.Tensor) -> torch.Tensor:
+        p = pred_kpts[..., :2]
+        w_v = vis_weights(gt_kpts)
+        torso = gt_torso_len(gt_kpts[..., :2], w_v, self.torso_bones, self.eps)  # (N,)
+        i, j = self.bones[:, 0], self.bones[:, 1]
+        p_len = (p[:, j] - p[:, i]).norm(dim=-1) / torso.unsqueeze(-1)  # (N,J)
+        w = w_v[:, i] * w_v[:, j]  # (N,J)
+        sigma = self.log_sigma.exp()
+        nll = 0.5 * ((p_len - self.mu.unsqueeze(0)) / sigma.unsqueeze(0)).pow(2) + self.log_sigma.unsqueeze(0)
+        return (nll * w).sum() / w.sum().add(self.eps)

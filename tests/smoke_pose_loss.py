@@ -1,5 +1,5 @@
-# round6 B2' 冒烟：真实训练路径跑一个合成 batch（含 v=0/1/2 混合），
-# 验证可见性软加权改动不破坏 loss 前向/反向
+# round6 冒烟：真实训练路径跑一个合成 batch（含 v=0/1/2 混合），
+# 逐档验证 B2' 软加权与 B1.2-B1.6 解剖先验开关：全关键集合恰好 5 项，逐项开启键齐备、反向全通
 import torch
 from ultralytics import YOLO
 from ultralytics.cfg import get_cfg
@@ -83,3 +83,22 @@ assert {"bone_loss", "symmetry_loss", "angle_prior_loss"} <= set(loss_items5), "
 assert torch.isfinite(loss5.sum()), "loss is not finite (uncertainty on)"
 loss5.sum().backward()
 print("SMOKE_OK (uncertainty weighting on)")
+
+# B1.6 对照（手工版批统计先验）：关掉自动配权，单独开 bone_stats
+model.args.anatomy_uncertainty = 0.0
+model.args.bone_stats = 1.0
+loss6, loss_items6 = model(batch)
+print("loss_items(bone_stats on)=", {k: round(v.item(), 4) for k, v in loss_items6.items()})
+assert "bone_stats_loss" in loss_items6, "bone_stats_loss key missing"
+assert torch.isfinite(loss6.sum()), "loss is not finite (bone_stats on)"
+loss6.sum().backward()
+print("SMOKE_OK (bone_stats on)")
+
+# B1.6 对照（可学习版高斯先验）：单独开 bone_prior，可训练 μ/σ 参数进梯度
+model.args.bone_prior = 1.0
+loss7, loss_items7 = model(batch)
+print("loss_items(bone_prior on)=", {k: round(v.item(), 4) for k, v in loss_items7.items()})
+assert "bone_prior_loss" in loss_items7, "bone_prior_loss key missing"
+assert torch.isfinite(loss7.sum()), "loss is not finite (bone_prior on)"
+loss7.sum().backward()
+print("SMOKE_OK (bone_prior on)")
