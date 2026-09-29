@@ -53,3 +53,12 @@ assert "bone_loss" in loss_items2, "bone_loss key missing when hyp.bone > 0"
 assert torch.isfinite(loss2.sum()), "loss is not finite (bone on)"
 loss2.sum().backward()
 print("SMOKE_OK (bone on)")
+
+# B1.3 开启：bone+symmetry 同时开，键齐备且反向仍通
+model.args.symmetry = 1.0
+loss3, loss_items3 = model(batch)
+print("loss_items(bone+sym on)=", {k: round(v.item(), 4) for k, v in loss_items3.items()})
+assert {"bone_loss", "symmetry_loss"} <= set(loss_items3), "anatomy loss keys missing"
+assert torch.isfinite(loss3.sum()), "loss is not finite (bone+sym on)"
+loss3.sum().backward()
+print("SMOKE_OK (bone+sym on)")

@@ -1,9 +1,8 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-# round6 B1.2：骨长+方向一致性正则（先例 arXiv 2212.02163 骨长约束）
-# 躯干长归一化去尺度歧义；两端点任一 v==0 则该骨段不参与，v==1（遮挡）端点按
-# B2' 语义半权重（骨段权重取两端点权重乘积）；GT 骨向量退化（长度≈0）时整段跳过；
-# 预测骨向量塌缩时方向项无定义只留长度项。
+# round6 解剖先验损失（B1.2 骨长+方向 / B1.3 对称性 / B1.4 角度合理性）
+# 共用语义：端点可见性权重取乘积（v==0 不监督、v==1 半权重，与 B2' 一致）；
+# 尺度用 GT 躯干长（肩-髋均值）归一化；GT 向量退化时跳过对应项。
 import torch
 from torch import nn
 
@@ -16,6 +15,19 @@ BONES_COCO17 = [
     (5, 6), (11, 12),  # 双肩连线、双髋连线
 ]
 TORSO_BONES_COCO17 = [(5, 11), (6, 12)]
+SYMMETRY_PAIRS_COCO17 = [(5, 6), (11, 12), (13, 14), (15, 16)]  # 左右肩/髋/膝/踝
+
+
+def vis_weights(gt_kpts: torch.Tensor) -> torch.Tensor:
+    """GT 可见性软权重：v==2→1.0、v==1（遮挡）→0.5、v==0→0（B2' 语义）。"""
+    return torch.where(gt_kpts[..., 2] == 1, 0.5, (gt_kpts[..., 2] > 0).float())
+
+
+def gt_torso_len(g: torch.Tensor, w_v: torch.Tensor, torso_bones: torch.Tensor, eps: float) -> torch.Tensor:
+    """GT 躯干长（肩-髋两段加权均值）；躯干无标注时退化为 1（不归一）。"""
+    torso_v = (g[:, torso_bones[:, 1]] - g[:, torso_bones[:, 0]]).norm(dim=-1)  # (N,T)
+    torso_vis = w_v[:, torso_bones[:, 0]] * w_v[:, torso_bones[:, 1]]
+    return (torso_v * torso_vis).sum(-1).add(eps) / torso_vis.sum(-1).add(eps)
 
 
 class BoneConsistencyLoss(nn.Module):
@@ -38,22 +50,17 @@ class BoneConsistencyLoss(nn.Module):
             gt_kpts (torch.Tensor): Ground truth keypoints (N, 17, 3), same coordinate space as pred.
 
         Returns:
-            (torch.Tensor): Scalar loss, normalized by valid bone count.
+            (torch.Tensor): Scalar loss, normalized by weighted valid bone count.
         """
         p = pred_kpts[..., :2]
         g = gt_kpts[..., :2]
-        v = (gt_kpts[..., 2] > 0).float()  # 只看 GT 可见性，v==0 端点的骨段不监督
-        # B2' 语义一致：v==1（遮挡）端点半权重，骨段权重取两端点权重乘积
-        w_v = torch.where(gt_kpts[..., 2] == 1, 0.5, v)
+        w_v = vis_weights(gt_kpts)
 
         bone_mask = w_v[:, self.bones[:, 0]] * w_v[:, self.bones[:, 1]]  # (N,E) 两端点权重乘积
         pv = p[:, self.bones[:, 1]] - p[:, self.bones[:, 0]]  # (N,E,2) 预测骨向量
         gv = g[:, self.bones[:, 1]] - g[:, self.bones[:, 0]]  # GT 骨向量
 
-        # 躯干长：肩-髋两段均值（GT 侧），预测与 GT 共用同一 T，躯干无标注时退化为 1（不归一）
-        torso_v = (g[:, self.torso[:, 1]] - g[:, self.torso[:, 0]]).norm(dim=-1)  # (N,T)
-        torso_vis = w_v[:, self.torso[:, 0]] * w_v[:, self.torso[:, 1]]
-        torso_len = (torso_v * torso_vis).sum(-1).add(self.eps) / torso_vis.sum(-1).add(self.eps)
+        torso_len = gt_torso_len(g, w_v, self.torso, self.eps)
 
         e_len = (pv - gv).pow(2).sum(-1) / torso_len.unsqueeze(-1).pow(2).add(self.eps)  # 长度项（T 归一化）
 
@@ -66,3 +73,26 @@ class BoneConsistencyLoss(nn.Module):
         valid = bone_mask * (g_norm > self.eps).float()  # GT 骨向量退化整段跳过
         total = (e_len + e_dir) * self.lam.view(1, -1) * valid
         return total.sum() / valid.sum().add(self.eps)
+
+
+class SymmetryLoss(nn.Module):
+    """左右对称软惩罚：配对关节 y 坐标差（躯干归一化）的 L2。"""
+
+    def __init__(self, pairs=SYMMETRY_PAIRS_COCO17, torso_bones=TORSO_BONES_COCO17, eps=1e-7):
+        super().__init__()
+        self.register_buffer("pairs", torch.tensor(pairs, dtype=torch.long))  # (P,2)
+        self.register_buffer("torso", torch.tensor(torso_bones, dtype=torch.long))
+        self.eps = eps
+
+    def forward(self, pred_kpts: torch.Tensor, gt_kpts: torch.Tensor) -> torch.Tensor:
+        """Pairwise y-difference penalty, torso-normalized and weighted by endpoint visibility product."""
+        p = pred_kpts[..., :2]
+        g = gt_kpts[..., :2]
+        w_v = vis_weights(gt_kpts)
+
+        w = w_v[:, self.pairs[:, 0]] * w_v[:, self.pairs[:, 1]]  # (N,P)
+        torso_len = gt_torso_len(g, w_v, self.torso, self.eps)
+
+        dy = (p[:, self.pairs[:, 0], 1] - p[:, self.pairs[:, 1], 1]).abs()  # (N,P)
+        e = dy.div(torso_len.unsqueeze(-1).add(self.eps)).pow(2) * w
+        return e.sum() / w.sum().add(self.eps)
