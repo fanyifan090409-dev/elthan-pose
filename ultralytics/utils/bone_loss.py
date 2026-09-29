@@ -16,6 +16,13 @@ BONES_COCO17 = [
 ]
 TORSO_BONES_COCO17 = [(5, 11), (6, 12)]
 SYMMETRY_PAIRS_COCO17 = [(5, 6), (11, 12), (13, 14), (15, 16)]  # 左右肩/髋/膝/踝
+# (顶点, 端点1, 端点2, 折叠角下限/度)：肘 10°、膝 20°（内角低于下限视为解剖不合理）
+ANGLE_TRIPLES_COCO17 = [
+    (7, 5, 9, 10.0),  # 左肘
+    (8, 6, 10, 10.0),  # 右肘
+    (13, 11, 15, 20.0),  # 左膝
+    (14, 12, 16, 20.0),  # 右膝
+]
 
 
 def vis_weights(gt_kpts: torch.Tensor) -> torch.Tensor:
@@ -95,4 +102,33 @@ class SymmetryLoss(nn.Module):
 
         dy = (p[:, self.pairs[:, 0], 1] - p[:, self.pairs[:, 1], 1]).abs()  # (N,P)
         e = dy.div(torso_len.unsqueeze(-1).add(self.eps)).pow(2) * w
+        return e.sum() / w.sum().add(self.eps)
+
+
+class AnglePlausibilityLoss(nn.Module):
+    """关节角度合理性：三点内角低于解剖下限（肘 10°/膝 20°）时软惩罚，权重取三点可见性乘积。
+
+    只惩罚「折叠过深」一侧——内角上界 180° 是站立常态，不做上界惩罚（超伸在 2D 内角中
+    不可表示）；域特定高斯先验留待产品数据集训练时另做，此处保持保守弱正则。
+    """
+
+    def __init__(self, triples=ANGLE_TRIPLES_COCO17, eps=1e-7):
+        super().__init__()
+        # (J,4): 顶点, 端点1, 端点2, 折叠角下限（度）
+        self.register_buffer("triples", torch.tensor(triples, dtype=torch.float32))
+        self.eps = eps
+
+    def forward(self, pred_kpts: torch.Tensor, gt_kpts: torch.Tensor) -> torch.Tensor:
+        """Hinge penalty for joints flexed below the anatomical minimum angle."""
+        p = pred_kpts[..., :2]
+        w_v = vis_weights(gt_kpts)
+
+        v = self.triples[:, :3].to(torch.long)  # (J,3)
+        w = w_v[:, v[:, 0]] * w_v[:, v[:, 1]] * w_v[:, v[:, 2]]  # (N,J) 三点权重乘积
+        a = p[:, v[:, 1]] - p[:, v[:, 0]]  # 端点1→顶点
+        b = p[:, v[:, 2]] - p[:, v[:, 0]]  # 端点2→顶点
+        cos = (a * b).sum(-1) / (a.norm(dim=-1) * b.norm(dim=-1)).add(self.eps)
+        theta = cos.clamp(-1.0, 1.0).acos()  # 内角（弧度）
+        theta_min = self.triples[:, 3].deg2rad().unsqueeze(0)
+        e = (theta_min - theta).clamp(min=0.0).pow(2) * w
         return e.sum() / w.sum().add(self.eps)

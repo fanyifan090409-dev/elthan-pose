@@ -42,6 +42,8 @@ loss, loss_items = model(batch)
 print("loss_sum=", loss.sum().item())
 print("loss_items=", {k: round(v.item(), 4) for k, v in loss_items.items()})
 assert torch.isfinite(loss.sum()), "loss is not finite"
+# 全关时键集合必须只有原始 5 项（解剖先验默认不出现，避免污染基线）
+assert set(loss_items) == {"box_loss", "pose_loss", "kobj_loss", "cls_loss", "dfl_loss"}, "unexpected keys when all off"
 loss.sum().backward()
 print("SMOKE_OK (bone off)")
 
@@ -62,3 +64,13 @@ assert {"bone_loss", "symmetry_loss"} <= set(loss_items3), "anatomy loss keys mi
 assert torch.isfinite(loss3.sum()), "loss is not finite (bone+sym on)"
 loss3.sum().backward()
 print("SMOKE_OK (bone+sym on)")
+
+# B1.4 开启：三项解剖先验全开
+# 注意键名是 angle_prior：default.yaml 的 angle 已被 OBB 定向角增益占用（默认 1.0），不可用作开关
+model.args.angle_prior = 1.0
+loss4, loss_items4 = model(batch)
+print("loss_items(all on)=", {k: round(v.item(), 4) for k, v in loss_items4.items()})
+assert {"bone_loss", "symmetry_loss", "angle_prior_loss"} <= set(loss_items4), "anatomy loss keys missing"
+assert torch.isfinite(loss4.sum()), "loss is not finite (all on)"
+loss4.sum().backward()
+print("SMOKE_OK (all anatomy on)")

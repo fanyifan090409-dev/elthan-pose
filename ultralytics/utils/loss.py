@@ -15,7 +15,7 @@ from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
-from .bone_loss import BoneConsistencyLoss, SymmetryLoss
+from .bone_loss import AnglePlausibilityLoss, BoneConsistencyLoss, SymmetryLoss
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
@@ -673,10 +673,13 @@ class v8PoseLoss(v8DetectionLoss):
 
         self.keypoint_loss = KeypointLoss(sigmas=sigmas)
         # 解剖先验损失（B1.2 骨长 / B1.3 对称 / B1.4 角度），键名与 hyp 权重键一致，默认全关
+        # 解剖先验损失（B1.2 骨长 / B1.3 对称 / B1.4 角度），键名与 hyp 权重键一致，默认全关。
+        # 注意「angle」不可用：default.yaml 已有 angle（OBB 定向角增益，默认 1.0），故用 angle_prior
         self.anatomy_criteria = nn.ModuleDict(
             {
                 "bone": BoneConsistencyLoss(),
                 "symmetry": SymmetryLoss(),
+                "angle_prior": AnglePlausibilityLoss(),
             }
         ).to(self.device)
 
