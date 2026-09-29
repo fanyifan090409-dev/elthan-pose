@@ -809,7 +809,13 @@ class v8PoseLoss(v8DetectionLoss):
             area = xyxy2xywh(target_bboxes[masks])[:, 2:].prod(1, keepdim=True)
             pred_kpt = pred_kpts[masks]
             kpt_mask = gt_kpt[..., 2] != 0 if gt_kpt.shape[-1] == 3 else torch.full_like(gt_kpt[..., 0], True)
-            kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)  # pose loss
+            # B2' 可见性软加权：v==2 全权重 1.0，v==1（遮挡）半权重 0.5 保留弱监督，v==0 不监督。
+            # kobj 的 BCE 目标必须保持二值，软权重只作用于坐标损失
+            if gt_kpt.shape[-1] == 3:
+                kpt_w = kpt_mask.float() * torch.where(gt_kpt[..., 2] == 1, 0.5, 1.0)
+                kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_w, area)  # pose loss
+            else:
+                kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)  # pose loss
 
             if pred_kpt.shape[-1] == 3:
                 kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss
