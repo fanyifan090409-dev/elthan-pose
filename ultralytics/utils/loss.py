@@ -890,9 +890,11 @@ class v8PoseLoss(v8DetectionLoss):
         once for all enabled modules.
         """
         selected_keypoints = self._select_target_keypoints(keypoints, batch_idx, target_gt_idx, masks)
-        gt_kpt = selected_keypoints[masks]
+        # 解剖先验全程 fp32：AMP autocast 下网格空间坐标（≈240）平方/乘积和可达 1e5，
+        # 超过 fp16 上限 65504 溢出为 NaN（b14 崩溃根因），转 fp32 后再归一化与计算
+        gt_kpt = selected_keypoints[masks].float()
         gt_kpt[..., :2] /= stride_tensor.view(1, -1).expand(masks.shape[0], -1)[masks][:, None, None]
-        pred_kpt = pred_kpts[masks]
+        pred_kpt = pred_kpts[masks].float()
         return {k: self.anatomy_criteria[k](pred_kpt, gt_kpt) for k in enabled}
 
 
