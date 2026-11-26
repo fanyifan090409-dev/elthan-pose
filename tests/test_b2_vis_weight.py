@@ -25,4 +25,4 @@ l_zero = kpl(pred, gt, mask_zero, area).item()
 assert abs(l_half / l_full - 0.75) < 1e-6, (l_half, l_full)
 # v==0 不监督：只剩 kpt0，归一化因子 2/1=2 → 损失回到 full 水平（均值语义，非除错）
 assert abs(l_zero / l_full - 1.0) < 1e-6, (l_zero, l_full)
-print("B2_WEIGHT_OK full=%.6f half=%.6f zero=%.6f" % (l_full, l_half, l_zero))
+print(f"B2_WEIGHT_OK full={l_full:.6f} half={l_half:.6f} zero={l_zero:.6f}")

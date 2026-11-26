@@ -8,15 +8,15 @@ YOLO11-pose 解剖先验改进 fork（论文 B 代码）。Base = ultralytics 8.
 
 ## 改动清单（commit 链，旧 → 新）
 
-| Commit | 改动 |
-|---|---|
-| ec36986 | vendored ultralytics 8.4.128 纯净快照（round6 base） |
-| 29437d6 | B2'：关键点可见性软加权（训练侧利用 v 通道，官方 issue #3409 确认训练忽略 v） |
-| 9678bf5 | B1.2：骨长 + 方向一致性正则（BoneConsistencyLoss） |
-| 394c66c | B1.3：左右对称软惩罚（SymmetryLoss）+ 解剖先验统一框架 |
-| 0232c4c | B1.4：关节角度合理性铰链惩罚（AnglePlausibilityLoss） |
-| 935cf8c | B1.5：解析式不确定性自动配权（uncertainty_weights） |
-| 16e81ca | B1.6：手工规则 vs 可学习骨长先验对照（BoneStatsLoss / LearnableBonePrior） |
+| Commit  | 改动                                                                                 |
+| ------- | ------------------------------------------------------------------------------------ |
+| ec36986 | vendored ultralytics 8.4.128 纯净快照（round6 base）                                 |
+| 29437d6 | B2'：关键点可见性软加权（训练侧利用 v 通道，官方 issue #3409 确认训练忽略 v）        |
+| 9678bf5 | B1.2：骨长 + 方向一致性正则（BoneConsistencyLoss）                                   |
+| 394c66c | B1.3：左右对称软惩罚（SymmetryLoss）+ 解剖先验统一框架                               |
+| 0232c4c | B1.4：关节角度合理性铰链惩罚（AnglePlausibilityLoss）                                |
+| 935cf8c | B1.5：解析式不确定性自动配权（uncertainty_weights）                                  |
+| 16e81ca | B1.6：手工规则 vs 可学习骨长先验对照（BoneStatsLoss / LearnableBonePrior）           |
 | c2ee539 | fix：anatomy loss 转 fp32 计算（AMP fp16 网格坐标平方 ≈1e5 超 65504 上限 → b14 NaN） |
 
 ## 结果（如实报告，负面结果）
