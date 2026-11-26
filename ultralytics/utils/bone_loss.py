@@ -7,12 +7,18 @@ import torch
 from torch import nn
 
 BONES_COCO17 = [
-    (5, 7), (7, 9),  # 左肩-左肘、左肘-左腕
-    (6, 8), (8, 10),  # 右肩-右肘、右肘-右腕
-    (11, 13), (13, 15),  # 左髋-左膝、左膝-左踝
-    (12, 14), (14, 16),  # 右髋-右膝、右膝-右踝
-    (5, 11), (6, 12),  # 左肩-左髋、右肩-右髋
-    (5, 6), (11, 12),  # 双肩连线、双髋连线
+    (5, 7),
+    (7, 9),  # 左肩-左肘、左肘-左腕
+    (6, 8),
+    (8, 10),  # 右肩-右肘、右肘-右腕
+    (11, 13),
+    (13, 15),  # 左髋-左膝、左膝-左踝
+    (12, 14),
+    (14, 16),  # 右髋-右膝、右膝-右踝
+    (5, 11),
+    (6, 12),  # 左肩-左髋、右肩-右髋
+    (5, 6),
+    (11, 12),  # 双肩连线、双髋连线
 ]
 TORSO_BONES_COCO17 = [(5, 11), (6, 12)]
 SYMMETRY_PAIRS_COCO17 = [(5, 6), (11, 12), (13, 14), (15, 16)]  # 左右肩/髋/膝/踝
@@ -26,19 +32,19 @@ ANGLE_TRIPLES_COCO17 = [
 
 
 def vis_weights(gt_kpts: torch.Tensor) -> torch.Tensor:
-    """GT 可见性软权重：v==2→1.0、v==1（遮挡）→0.5、v==0→0（B2' 语义）。"""
+    """GT 可见性软权重：v==2→1.0、v==1（遮挡）→0.5、v==0→0（B2' 语义）。."""
     return torch.where(gt_kpts[..., 2] == 1, 0.5, (gt_kpts[..., 2] > 0).float())
 
 
 def gt_torso_len(g: torch.Tensor, w_v: torch.Tensor, torso_bones: torch.Tensor, eps: float) -> torch.Tensor:
-    """GT 躯干长（肩-髋两段加权均值）；躯干无标注时退化为 1（不归一）。"""
+    """GT 躯干长（肩-髋两段加权均值）；躯干无标注时退化为 1（不归一）。."""
     torso_v = (g[:, torso_bones[:, 1]] - g[:, torso_bones[:, 0]]).norm(dim=-1)  # (N,T)
     torso_vis = w_v[:, torso_bones[:, 0]] * w_v[:, torso_bones[:, 1]]
     return (torso_v * torso_vis).sum(-1).add(eps) / torso_vis.sum(-1).add(eps)
 
 
 class BoneConsistencyLoss(nn.Module):
-    """骨段向量一致性损失：mean_e [ ‖ê−e‖² + (1−cos θ_e) ]，ê=预测骨向量、e=GT 骨向量，均除以 GT 躯干长。"""
+    """骨段向量一致性损失：mean_e [ ‖ê−e‖² + (1−cos θ_e) ]，ê=预测骨向量、e=GT 骨向量，均除以 GT 躯干长。."""
 
     def __init__(self, bones=BONES_COCO17, torso_bones=TORSO_BONES_COCO17, lam=None, eps=1e-7):
         """Initialize with bone edge pairs, torso normalization bones and per-bone weights."""
@@ -83,7 +89,7 @@ class BoneConsistencyLoss(nn.Module):
 
 
 class SymmetryLoss(nn.Module):
-    """左右对称软惩罚：配对关节 y 坐标差（躯干归一化）的 L2。"""
+    """左右对称软惩罚：配对关节 y 坐标差（躯干归一化）的 L2。."""
 
     def __init__(self, pairs=SYMMETRY_PAIRS_COCO17, torso_bones=TORSO_BONES_COCO17, eps=1e-7):
         super().__init__()
@@ -106,10 +112,9 @@ class SymmetryLoss(nn.Module):
 
 
 class AnglePlausibilityLoss(nn.Module):
-    """关节角度合理性：三点内角低于解剖下限（肘 10°/膝 20°）时软惩罚，权重取三点可见性乘积。
+    """关节角度合理性：三点内角低于解剖下限（肘 10°/膝 20°）时软惩罚，权重取三点可见性乘积。.
 
-    只惩罚「折叠过深」一侧——内角上界 180° 是站立常态，不做上界惩罚（超伸在 2D 内角中
-    不可表示）；域特定高斯先验留待产品数据集训练时另做，此处保持保守弱正则。
+    只惩罚「折叠过深」一侧——内角上界 180° 是站立常态，不做上界惩罚（超伸在 2D 内角中 不可表示）；域特定高斯先验留待产品数据集训练时另做，此处保持保守弱正则。
     """
 
     def __init__(self, triples=ANGLE_TRIPLES_COCO17, eps=1e-7):
@@ -135,10 +140,9 @@ class AnglePlausibilityLoss(nn.Module):
 
 
 def uncertainty_weights(losses: list, temperature: float) -> torch.Tensor:
-    """B1.5 解剖先验自动配权（arXiv 2408.07985 解析解 σ*=√L 的 softmax 形式）。
+    """B1.5 解剖先验自动配权（arXiv 2408.07985 解析解 σ*=√L 的 softmax 形式）。.
 
-    ω_j = softmax_j((1/L_j)/T)。调用方须传入 detach 后的损失（stopgradient：权重只做
-    平衡，不给损失本身回传梯度）；L_j + eps 防除零（预测完美时 L→0，权重全归该项）。
+    ω_j = softmax_j((1/L_j)/T)。调用方须传入 detach 后的损失（stopgradient：权重只做 平衡，不给损失本身回传梯度）；L_j + eps 防除零（预测完美时 L→0，权重全归该项）。
     温度越大分布越均匀；单元素退化为 1.0（softmax 单值恒 1）。
     """
     inv = torch.stack([1.0 / (v + 1e-8) for v in losses])
@@ -146,10 +150,9 @@ def uncertainty_weights(losses: list, temperature: float) -> torch.Tensor:
 
 
 class BoneStatsLoss(nn.Module):
-    """B1.6 手工版对照：批内统计先验——参考骨长为本批 fg 样本 GT 骨长（躯干归一化）的加权均值。
+    """B1.6 手工版对照：批内统计先验——参考骨长为本批 fg 样本 GT 骨长（躯干归一化）的加权均值。.
 
-    与 BoneConsistencyLoss（逐样本 GT 监督）不同：监督信号是批统计量 μ_j 而非单个样本的
-    GT 向量；单样本批退化为逐样本对比。骨段两端任一 v==0 或 GT 骨向量退化则整段跳过，
+    与 BoneConsistencyLoss（逐样本 GT 监督）不同：监督信号是批统计量 μ_j 而非单个样本的 GT 向量；单样本批退化为逐样本对比。骨段两端任一 v==0 或 GT 骨向量退化则整段跳过，
     本批无有效样本的骨段不参与。
     """
 
@@ -176,10 +179,9 @@ class BoneStatsLoss(nn.Module):
 
 
 class LearnableBonePrior(nn.Module):
-    """B1.6 可学习版：每骨段可训练 (μ,σ) 高斯先验，损失为负对数似然（躯干归一化骨长）。
+    """B1.6 可学习版：每骨段可训练 (μ,σ) 高斯先验，损失为负对数似然（躯干归一化骨长）。.
 
-    μ 初值 1.0（归一化骨长 O(1)）、log σ 初值 0（σ=1）；梯度同时流向预测骨长与先验参数。
-    GT 只用于可见性掩码与躯干归一化，不提供逐样本长度监督（与 BoneStatsLoss 批统计对照）。
+    μ 初值 1.0（归一化骨长 O(1)）、log σ 初值 0（σ=1）；梯度同时流向预测骨长与先验参数。 GT 只用于可见性掩码与躯干归一化，不提供逐样本长度监督（与 BoneStatsLoss 批统计对照）。
     """
 
     def __init__(self, bones=BONES_COCO17, torso_bones=TORSO_BONES_COCO17, eps=1e-7):
